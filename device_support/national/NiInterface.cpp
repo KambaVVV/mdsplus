@@ -93,6 +93,17 @@ extern "C" void setStopAcqFlag(void *stopAcq);
 
 extern "C" int PXIeTriggerRTSI1(int *devNums, int numChassis);
 
+extern "C" int pxi6368EV_readAndSaveAllChannels(
+    int aiFd, int nChan, void *chanFdPtr, int *isBurst, int *f1Div, int *f2Div,
+    double maxDelay, double baseFreq, double *preTimes, double *postTimes,
+    double startTime, int bufSize, int segmentSize, char **eventNames,
+    void *dataNidPtr, void *treePtr, void *saveListPtr, void *stopAcq);
+extern "C" int pxi6259EV_readAndSaveAllChannels(
+    int nChan, void *chanFdPtr, int *isBurst, int *f1Div, int *f2Div,
+    double maxDelay, double baseFreq, double *preTimes, double *postTimes,
+    double startTime, int bufSize, int segmentSize, char **eventNames,
+    void *dataNidPtr, void *treePtr, void *saveListPtr, void *stopAcq);
+
 void pxi6259_create_ai_conf_ptr(void **confPtr) {
   pxi6259_ai_conf_t *conf =
       (pxi6259_ai_conf_t *)malloc(sizeof(pxi6259_ai_conf_t));
@@ -928,8 +939,7 @@ int xseriesReadAndSaveAllChannels(int aiFd, int nChan, void *chanFdPtr,
   int *resampledNid = (int *)resampledNidPtr; // Channel node identifier
 
   int readCalls[nChan]; // For statistic number of read operation pe channel
-  unsigned short *
-      buffers_s[nChan]; // Raw data buffer used when not converted data are read
+  unsigned short *buffers_s[nChan]; // Raw data buffer used when not converted data are read
   float *buffers_f[nChan]; // Converted data buffer uesed when converted dta are
                            // read
   int readChanSmp[nChan];  // Numebr of samples to read from each channel
@@ -3038,6 +3048,7 @@ public:
     this->tree = tree;
     this->rawNode = rawNode;
     this->bufSize = (preTime + maxDelay) * baseFreq;
+    // printf("==== BUFFER SIZE : %d =====", bufSize); LUCA
     this->buffer = new short[this->bufSize];
     this->bufferIdx = this->oldestBufferIdx = 0;
     this->sampleCount = 0;
@@ -3119,7 +3130,7 @@ public:
     this->currBaseSampleCount = -1;
     this->bufStartTime = startTime;
     double bufEndTime =
-        startTime + segmentSize * (this->basePeriod * f12Div[0]);
+        startTime + segmentSize * (this->basePeriod * f12Div[0]); // GIUSTO??
     bufStartTimes.push_back(startTime);
     bufEndTimes.push_back(bufEndTime);
     bufPeriods.push_back(this->basePeriod * f12Div[0]);
@@ -3130,8 +3141,7 @@ public:
     delete[] initSeg;
     MDSplus::Data *startSegData = new MDSplus::Float64(startTime);
     MDSplus::Data *endSegData = new MDSplus::Float64(bufEndTime);
-    MDSplus::Data *periodData =
-        new MDSplus::Float64(this->basePeriod * f12Div[0]);
+    MDSplus::Data *periodData = new MDSplus::Float64(this->basePeriod * f12Div[0]);
     MDSplus::Data *dimData = MDSplus::compileWithArgs(
         "build_range($, $, $)", tree, 3, startSegData, endSegData, periodData);
     rawNode->beginSegment(startSegData, endSegData, dimData, initSegData);
@@ -3168,20 +3178,17 @@ public:
         std::cout << "BUFFER FILLED" << std::endl;
 
         MDSplus::Array *bufferData = new Int16Array(segBuffer, segBufSize);
-        saveList->addItem(SEGMENT_OP_PUT, NULL, NULL, NULL, bufferData,
-                          rawNode);
+        saveList->addItem(SEGMENT_OP_PUT, NULL, NULL, NULL, bufferData,rawNode);
         // rawNode->putSegment(bufferData, -1);
         segBufSampleCount = 0;
         bufferCount++;
-        if (bufferCount >=
-            numBuffersInSegment) // Need to possibly adjust segment end and
+        if (bufferCount >= numBuffersInSegment) // Need to possibly adjust segment end and
                                  // dimension and create a new segment
         {
           std::cout << "SEGMENT FILLED" << std::endl;
           // Prepare next segment
           bufStartTime = basePeriod * baseSampleCount;
-          double bufEndTime =
-              bufStartTime + segmentSize * basePeriod * f12Div[currDivIdx];
+          double bufEndTime = bufStartTime + segmentSize * basePeriod * f12Div[currDivIdx];
           MDSplus::Data *startSegData = new MDSplus::Float64(bufStartTime);
           MDSplus::Data *endSegData = new MDSplus::Float64(bufEndTime);
           MDSplus::Data *periodData =
@@ -3220,7 +3227,7 @@ public:
             0; // wait a period for the new frequency before saving sample
         bufStartTimes.push_back(switchTimes[0] +
                                 basePeriod * f12Div[currDivIdx]);
-        bufEndTimes[bufEndTimes.size() - 1] = switchTimes[0] + minPeriod / 2.;
+        bufEndTimes[bufEndTimes.size() - 1] = switchTimes[0] + minPeriod / 2.; // /2. GIUSTO???
       } else {
         currBaseSampleCount = -1; // Next sample is being written
         bufStartTimes.push_back(switchTimes[0]);
@@ -3366,7 +3373,7 @@ public:
                                      startSegData, endSegData, periodData);
         MDSplus::Array *segData =
             new MDSplus::Int16Array(segBuffer, segmentSize);
-        std::cout << "SEG START: " << startSegData << std::endl;
+        std::cout << "SEG START: " << startSegData << " FOR NODE" << rawNode -> getPath() << std::endl;
         std::cout << "SEG END: " << endSegData << std::endl;
         std::cout << "SEG DIM: " << dimData << std::endl;
         saveList->addItem(SEGMENT_OP_MAKE, startSegData, endSegData, dimData,
@@ -3402,6 +3409,7 @@ public:
   }
   virtual void trigger(double trigTime) {
     double startTime = trigTime - preTime;
+    // std::cout << "DEBUG -> TRIGTIME: " << trigTime << " PRETIME: " << preTime << " STARTTIME: " << startTime << endl;  
     size_t idx;
     if (startTimes.size() == 0 ||
         startTimes[startTimes.size() - 1] <= startTime)
@@ -3422,7 +3430,7 @@ class EventHandler : public Event {
 
 public:
   EventHandler(char *name, BufferHandler *buf) : Event(name) {
-    std::cout << "Created event handler for " << name << std::endl;
+    // std::cout << "Created event handler for " << name << std::endl;
     this->bufHandler = buf;
   }
   void run() {
@@ -3542,5 +3550,110 @@ int pxi6259EV_readAndSaveAllChannels(
   //	delete bufferHandlers[chan];
   delete[] bufferHandlers;
   printf("STOP PXI 6259 Acquisition \n");
+  return 1;
+}
+
+int pxi6368EV_readAndSaveAllChannels(
+    int aiFd, int nChan, void *chanFdPtr, int *isBurst, int *f1Div, int *f2Div,
+    double maxDelay, double baseFreq, double *preTimes, double *postTimes,
+    double startTime, int bufSize, int segmentSize, char **eventNames,
+    void *dataNidPtr, void *treePtr, void *saveListPtr, void *stopAcq) {
+  int chan;
+  SaveListEV *saveList = (SaveListEV *)saveListPtr;
+  int *chanFd = (int *)chanFdPtr;
+  int *dataNid = (int *)dataNidPtr;
+  BufferHandler **bufferHandlers;
+  EventHandler **eventHandlers;
+  MDSplus::TreeNode **treeNodes;
+  treeNodes = new MDSplus::TreeNode *[nChan];
+  // Delete first all data nids
+  for (int i = 0; i < nChan; i++) {
+    try {
+      treeNodes[i] = new TreeNode(dataNid[i], (Tree *)treePtr);
+      treeNodes[i]->deleteData();
+    } catch (MdsException &exc) {
+      printf("Error deleting data nodes\n");
+    }
+  }
+  (*(int *)stopAcq) = 0;
+
+  bufferHandlers = new BufferHandler *[nChan];
+  memset(bufferHandlers, 0, sizeof(BufferHandler *) * nChan);
+  eventHandlers = new EventHandler *[nChan];
+  memset(eventHandlers, 0, sizeof(EventHandler *) * nChan);
+  for (chan = 0; chan < nChan; chan++) {
+    if (isBurst[chan]){
+      bufferHandlers[chan] = new BurstBufferHandler(
+          (MDSplus::Tree *)treePtr, treeNodes[chan], maxDelay, f1Div[chan],
+          baseFreq, startTime, preTimes[chan], postTimes[chan], segmentSize,
+          saveList);
+    }
+    else
+      bufferHandlers[chan] = new ClockBufferHandler(
+          (MDSplus::Tree *)treePtr, treeNodes[chan], maxDelay, f1Div[chan],
+          f2Div[chan], baseFreq, bufSize, segmentSize, startTime,
+          preTimes[chan], postTimes[chan], saveList);
+    if (eventNames[chan][0]) // Empty string is passed for no event
+    {
+      eventHandlers[chan] = new EventHandler(eventNames[chan], bufferHandlers[chan]);
+      eventHandlers[chan]->start();
+    } else
+      eventHandlers[chan] = NULL;
+  }
+  xseries_start_ai(aiFd);
+  while (!(*(int *)stopAcq)) {
+    float buffer[XSERIES_MAX_BUFSIZE];
+    for (chan = 0; chan < nChan; chan++) {
+      int currReadSamples = xseries_read_ai(chanFd[chan], buffer, XSERIES_MAX_BUFSIZE);
+      if (currReadSamples <= 0) {
+        if (errno == EAGAIN || errno == ENODATA) {
+          usleep(50);
+          currReadSamples = 0; // No data currently available... Try again
+                               // continue;
+        } else {
+          if (errno == EOVERFLOW) {
+            printf("PXI 6368 Error reading samples on ai%d: (%d) %s \n", chan,
+                   errno, strerror(errno));
+            for (chan = 0; chan < nChan; chan++) {
+              if (eventHandlers[chan]) {
+                eventHandlers[chan]->stop();
+                delete eventHandlers[chan];
+              }
+              delete bufferHandlers[chan];
+            }
+            delete[] eventHandlers;
+            delete[] bufferHandlers;
+            return -2;
+          }
+        }
+      } else {
+        for (int sampleIdx = 0; sampleIdx < currReadSamples; sampleIdx++) {
+          bufferHandlers[chan]->processSample(buffer[sampleIdx]);
+          //		    std::cout << buffer[sampleIdx] << std::endl;
+        }
+      }
+    }
+  }
+
+  for (chan = 0; chan < nChan; chan++) {
+    if (eventHandlers[chan]) {
+      std::cout << "STOPPING EVENT HANDLER...." << std::endl;
+      eventHandlers[chan]->stop();
+      std::cout << "STOPPED" << std::endl;
+      delete eventHandlers[chan];
+    }
+    std::cout << "TERMINATING BUFFER HANDLER...." << std::endl;
+    bufferHandlers[chan]->terminate();
+    std::cout << "TERMINATED" << std::endl;
+  }
+  saveList->stop();
+
+  std::cout << "DELETING eventHandlers" << std::endl;
+  delete[] eventHandlers;
+  std::cout << "DELETING bufferHandlers" << std::endl;
+  //    for( chan = 0; chan < nChan; chan++ )
+  //	delete bufferHandlers[chan];
+  delete[] bufferHandlers;
+  printf("STOP PXI 6368 Acquisition \n");
   return 1;
 }
